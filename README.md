@@ -20,7 +20,7 @@ privileged or semi-privileged system services through one shared transport.
 - **Signals** allow clients to receive events from services like for example when the user clicks on a button on a notification the app sent earlier. (not implemented yet)
 
 
-The current userspace entry point is `/dev/services`.
+The current userspace entry point is `/dev/services`, where consumers need to open it and send serialized commands using [postcard](https://github.com/jamesmunns/postcard) through `ioctl` syscall.
 
 > Status: early prototype. This is kernel code, and panics or incorrect unsafe
 > code can crash the running system. Develop and load it carefully.
