@@ -1,0 +1,28 @@
+[package]
+name = "motherboardm"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+bitflags = { version = "2.10.0", default-features = false }
+hashbrown = { version = "0.17.1", default-features = false, features = ["default-hasher"] }
+lazy_static = { version = "1.5.0", features = ["spin_no_std"] }
+log = "0.4.33"
+motherboardm-protocol = { path = "../protocol", default-features = false }
+postcard = { version = "1.0", default-features = false }
+serde = { default-features = false, features = ["derive", "alloc"], version = "*" }
+spin = { version = "0.12.0", default-features = false, features = [
+    "mutex",
+    "use_ticket_mutex",
+] }
+[lints.rust]
+unexpected_cfgs = { level = "allow" }
+
+[patch.crates-io]
+serde_core = { git = "https://github.com/coffeeispower/serde", rev = "d88d3ec" }
+
+[profile.dev.package.serde]
+opt-level = 1

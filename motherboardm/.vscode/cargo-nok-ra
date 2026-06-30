@@ -1,0 +1,5 @@
+#!/bin/sh
+exec cargo nok ra \
+    --kernel-source ./zen-kernel-7.0.14-zen1 \
+    --rust-analyzer /usr/bin/rust-analyzer \
+    -- "$@"
