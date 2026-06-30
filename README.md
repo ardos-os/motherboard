@@ -1,18 +1,24 @@
-# motherboardm
+<h1 align=center><code>motherboard</code></h1>
 
-`motherboardm` is an experimental Linux kernel module that provides a virtual
-system bus for local services.
+motherboardm is a kernel-backed service bus for Linux, built for fast IPC between applications and system services.
 
 It is designed for the operating-system shape where normal applications talk to
-privileged or semi-privileged system services through one shared transport:
+privileged or semi-privileged system services through one shared transport.
 
-- block-oriented messages instead of byte streams
-- async request/reply inboxes
-- pollable one-shot latch file descriptors
-- inline file descriptor passing
-- kernel-attested caller identity metadata
+`motherboard` has a lot of improvements over raw unix sockets:
 
-This is highly inspired by android where a lot of android java APIs actually map to calling remote functions from privileged system components and daemons such as when you ask for permissions, use startActivity to switch screens, send notifications or register services. motherboardm aims to help implement this pattern.
+- **Better IPC primitives:**
+    - Atomic messages instead of raw byte streams
+- **Async RPC**
+    - Uses fence/latch file descriptors which can be used with `poll` syscall, making it easy to integrate with async runtimes like `tokio`
+    - Inline file descriptor passing: file descriptors are included with the message along side the main payload so you never correlate the wrong file descriptor with the wrong message frame like it could happen with unix sockets.
+    - Kernel-attested caller identity metadata: the server implementing the service just knows who called it because it comes directly from the kernel, the caller can never forge it even if it is inside a user/pid namespace or a container.
+- **OS-level dependency injection**
+    - Apps do not know what process is implementing what service, allowing the implementation (server) to be swapped out entirely without breaking anything
+- **Reactive state and state management** (Not implemented yet)
+    - Services can contain stores which are variables which contain reactive data and can be watched and read by clients. Whenever the server updates the store's value, everyone is notified automatically.
+- **Signals** allow clients to receive events from services like for example when the user clicks on a button on a notification the app sent earlier. (not implemented yet)
+
 
 The current userspace entry point is `/dev/services`.
 
@@ -21,13 +27,14 @@ The current userspace entry point is `/dev/services`.
 
 ## Why
 
-Unix domain sockets already solve a lot of IPC problems, but they expose a
+Unix domain sockets already solve a lot of IPC problems, in fact, most of linux is implemented using them. But they expose a
 network-style stream/datagram model and require service protocols to rebuild
 the same transport concerns repeatedly: framing, request IDs, async wakeups,
 credential lookup, and `SCM_RIGHTS` fd passing.
 
 Not only that, but they usually force applications to be coupled to specific daemons and service implementations preventing
-the OS from being future-proof and evolve without breaking existing applications.
+the OS from being future-proof and evolve without breaking existing applications, and they just turn your operating system into a complex distributed system
+resembling Netflix infrastructure.
 
 `motherboardm` moves those concerns into one kernel-backed bus:
 
@@ -39,24 +46,15 @@ flowchart LR
     Bus -->|CallReply: request_id, status, payload, fds| App
 ```
 
-Services still own policy and business logic. The module only transports
-messages, preserves request/reply routing, installs file descriptors into the
-receiving process, and attaches origin metadata that userspace cannot forge.
+Services are opaque interfaces which privileged processes (servers) can provide implementations of.
 
-## Features
+Servers receive information about who called a specific function and allow them to apply their own policies and return errors whenever it thinks
+the caller is not entitled to do a certain action.
 
-- **Atomic message blocks**: commands carry a complete serialized payload rather
-  than a stream that needs delimiters or length headers.
-- **Non-blocking inboxes**: `Fetch` returns either a message or
-  `WouldBlock { latch_fd }`.
-- **Pollable latch fds**: the latch fd becomes readable when new inbox work
-  arrives, so services can integrate with `poll`, `epoll`, or async runtimes.
-- **Inline fd passing**: messages can have `fds: Box<[RawFd]>` attached to them. the kernel
-  clones the underlying `struct file` and installs a fresh fd in the receiver.
-- **Origin attestation**: delivered requests include kernel-provided `pid`,
-  `uid`, `gid`, and `is_trusted` metadata.
-- **Postcard protocol**: command and reply envelopes are serialized with
-  `postcard`, and the protocol crate supports `no_std` for kernel use.
+Servers may implement one service or multiple services at once, this allows the server to be swapped entirely or split into multiple processes
+and joined back into one without breaking the interface.
+
+This is highly inspired by android where a lot of android java APIs actually map to calling remote functions from privileged system components and daemons such as when you ask for permissions, use startActivity to switch screens, send notifications or register services. motherboardm aims to help implement this pattern.
 
 ## Repository Layout
 
