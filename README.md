@@ -17,7 +17,6 @@ privileged or semi-privileged system services through one shared transport.
     - Apps do not know what process is implementing what service, allowing the implementation (server) to be swapped out entirely without breaking anything
 - **Reactive state and state management**
     - Services can contain stores which are variables which contain reactive data and can be watched and read by clients. Whenever the server updates the store's value, everyone is notified automatically.
-    - Store subscriptions are now implemented and are exposed to Ardos UI through `use_motherboard_store`.
 - **Signals** allow clients to receive events from services like for example when the user clicks on a button on a notification the app sent earlier. (not implemented yet)
 
 
@@ -341,20 +340,18 @@ let theme = use_motherboard_store(
 The hook returns `Option<Arc<[u8]>>`: `None` means the first snapshot has not
 arrived yet, and `Some(value)` is the latest retained store value. Cloning the
 value only bumps an `Arc` reference count.
+# Proof of Concept
 
-The settings proof of concept demonstrates the full flow:
+The settings app proof of concept demonstrates the full flow:
 
-```bash
-cd proof-of-concept/settings-service
-cargo run
 
-cd proof-of-concept/settings-app
-cargo run
-```
 
-Open two settings app instances, click the theme toggle in one, and both app
-windows update through the `SettingsManager/theme` store.
+https://github.com/user-attachments/assets/f2569c94-2d06-4223-8f0b-f4e80c27efeb
+
+
+
+This video shows a settings app calling a setter function and both apps reacting to state changes in the settings service automatically.
 
 ## License
 
-The kernel module declares a GPL module license.
+See [LICENSE.md](LICENSE.md) file.
