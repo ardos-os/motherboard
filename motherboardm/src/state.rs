@@ -1,4 +1,3 @@
-use alloc::vec::Vec;
 use hashbrown::HashMap;
 use kernel::task::CurrentTask;
 use lazy_static::lazy_static;
@@ -9,7 +8,10 @@ use crate::{
     SharedData, SharedStr,
     fake_files::inbox_latch::InboxLatch,
     motherboard_device::{FileId, MotherboardDevice},
-    services::{QueuedRequest, RequestQueueError, Service, clone_files_from_raw_fds},
+    services::{
+        QueuedRequest, RequestQueueError, Service, clone_files_from_raw_fds,
+        store::{StoreMap, StoreName, StorePath, StoreSubscriptionReplyTokens, Subscriptions},
+    },
     state::{
         message_inbox::{Inboxes, QueuedInboxMessage},
         reply_tokens::ReplyTokens,
@@ -45,6 +47,9 @@ pub struct State {
     services: HashMap<SharedStr, Service>,
     inboxes: Inboxes,
     reply_tokens: ReplyTokens,
+    stores: StoreMap,
+    subscriptions: Subscriptions,
+    store_subscription_reply_tokens: StoreSubscriptionReplyTokens,
 }
 impl State {
     fn new() -> Self {
@@ -52,6 +57,9 @@ impl State {
             services: Default::default(),
             inboxes: Inboxes::new(),
             reply_tokens: ReplyTokens::new(),
+            stores: StoreMap::new(),
+            subscriptions: Subscriptions::new(),
+            store_subscription_reply_tokens: StoreSubscriptionReplyTokens::new(),
         }
     }
 
@@ -62,7 +70,6 @@ impl State {
         file: FileId,
         process_cmdline: &str,
     ) -> CommandResult {
-        let todo = CommandResult(Err(TransportError::NotImplemented));
         match command {
             Command::BindService { name } => {
                 // I think 1000 UIDs reserved for Ardos OS services is enough
@@ -106,7 +113,7 @@ impl State {
                 );
                 CommandResult(Ok(CommandReply::ServiceBound))
             }
-            Command::Call {
+            Command::FunctionCall {
                 service,
                 method,
                 request_id,
@@ -129,9 +136,9 @@ impl State {
                 let service_file_id = service.file_id;
                 service.queue_call(queued_request);
                 self.inboxes.notify(service_file_id);
-                CommandResult(Ok(CommandReply::Submitted { request_id }))
+                CommandResult(Ok(CommandReply::FunctionCallAccepted { request_id }))
             }
-            Command::Reply {
+            Command::FunctionCallReply {
                 reply_token,
                 status,
                 payload,
@@ -150,11 +157,11 @@ impl State {
                         .queue(
                             pending.client_file_id,
                             QueuedInboxMessage::new(
-                                InboxMessage::CallReply {
+                                InboxMessage::FunctionCallReply {
                                     request_id: pending.request_id,
                                     status,
                                     payload,
-                                    fds: Vec::new().into_boxed_slice(),
+                                    fds: Array::default(),
                                 },
                                 stored_fds,
                             ),
@@ -163,17 +170,15 @@ impl State {
                     {
                         return CommandResult(Err(TransportError::ResourceExhausted));
                     }
-                    CommandResult(Ok(CommandReply::Replied))
+                    CommandResult(Ok(CommandReply::FunctionCallReplyAccepted))
                 }
                 Err(error) => CommandResult(Err(error)),
             },
-            Command::Subscribe { .. } => todo,
-            Command::SubscriptionReply { .. } => todo,
-            Command::UpdateStore { .. } => todo,
-            Command::Cancel { .. } => todo,
-            Command::Fetch => {
+            Command::InboxNextMessage => {
                 match self.inboxes.fetch(file) {
-                    Ok(Some(message)) => return CommandResult(Ok(CommandReply::Message(message))),
+                    Ok(Some(message)) => {
+                        return CommandResult(Ok(CommandReply::InboxMessagePopped(message)));
+                    }
                     Ok(None) => {}
                     Err(_) => return CommandResult(Err(TransportError::ResourceExhausted)),
                 }
@@ -200,9 +205,248 @@ impl State {
                 }
 
                 match first.into_user_message() {
-                    Ok(first) => CommandResult(Ok(CommandReply::Message(first))),
+                    Ok(first) => CommandResult(Ok(CommandReply::InboxMessagePopped(first))),
                     Err(_) => CommandResult(Err(TransportError::ResourceExhausted)),
                 }
+            }
+            Command::StoreSubscribe {
+                service,
+                store,
+                subscription_id,
+                payload,
+            } => {
+                let Some(service_ref) = self.services.get(service.as_ref()) else {
+                    return CommandResult(Err(TransportError::NoSuchService));
+                };
+                let store_name = match StoreName::check(store) {
+                    Ok(store_name) => store_name,
+                    Err(error) => {
+                        return CommandResult(Err(TransportError::InvalidStoreName {
+                            message: error.message.as_ref().into(),
+                        }));
+                    }
+                };
+                let path = StorePath::new(service, store_name);
+                let Some(store_ref) = self.stores.get(&path) else {
+                    return CommandResult(Err(TransportError::NoSuchStore));
+                };
+
+                if store_ref.is_public() {
+                    if let Err(error) =
+                        self.subscriptions
+                            .insert(subscription_id, file, path.clone())
+                    {
+                        return CommandResult(Err(error));
+                    }
+
+                    let snapshot = store_ref.snapshot();
+                    if self
+                        .inboxes
+                        .queue(
+                            file,
+                            QueuedInboxMessage::without_fds(
+                                InboxMessage::StoreSubscriptionAccepted {
+                                    service: snapshot.path.service.as_ref().into(),
+                                    store: snapshot.path.store.as_shared().as_ref().into(),
+                                    subscription_id,
+                                    current_value: snapshot.current_value.as_ref().into(),
+                                    last_updated_timestamp: snapshot.last_updated_timestamp,
+                                },
+                            ),
+                        )
+                        .is_err()
+                    {
+                        return CommandResult(Err(TransportError::ResourceExhausted));
+                    }
+                } else {
+                    let reply_token = self.store_subscription_reply_tokens.create(
+                        file,
+                        service_ref.file_id,
+                        subscription_id,
+                        path.clone(),
+                    );
+                    if self
+                        .inboxes
+                        .queue(
+                            service_ref.file_id,
+                            QueuedInboxMessage::without_fds(InboxMessage::SubscribeRequest {
+                                service: path.service.as_ref().into(),
+                                store: path.store.as_shared().as_ref().into(),
+                                subscription_id,
+                                reply_token,
+                                origin: auth_info.into(),
+                                payload,
+                            }),
+                        )
+                        .is_err()
+                    {
+                        return CommandResult(Err(TransportError::ResourceExhausted));
+                    }
+                }
+
+                CommandResult(Ok(CommandReply::StoreSubscriptionAccepted {
+                    subscription_id,
+                }))
+            }
+            Command::StoreSubscriptionReply {
+                reply_token,
+                verdict,
+            } => {
+                let pending = match self
+                    .store_subscription_reply_tokens
+                    .consume(reply_token, file)
+                {
+                    Ok(pending) => pending,
+                    Err(error) => return CommandResult(Err(error)),
+                };
+
+                match verdict {
+                    StoreSubscriptionServerVerdict::Accepted => {
+                        let Some(store_ref) = self.stores.get(&pending.store) else {
+                            return CommandResult(Err(TransportError::NoSuchStore));
+                        };
+                        if let Err(error) = self.subscriptions.insert(
+                            pending.subscription_id,
+                            pending.client_file_id,
+                            pending.store.clone(),
+                        ) {
+                            return CommandResult(Err(error));
+                        }
+
+                        let snapshot = store_ref.snapshot();
+                        if self
+                            .inboxes
+                            .queue(
+                                pending.client_file_id,
+                                QueuedInboxMessage::without_fds(
+                                    InboxMessage::StoreSubscriptionAccepted {
+                                        service: snapshot.path.service.as_ref().into(),
+                                        store: snapshot.path.store.as_shared().as_ref().into(),
+                                        subscription_id: pending.subscription_id,
+                                        current_value: snapshot.current_value.as_ref().into(),
+                                        last_updated_timestamp: snapshot.last_updated_timestamp,
+                                    },
+                                ),
+                            )
+                            .is_err()
+                        {
+                            return CommandResult(Err(TransportError::ResourceExhausted));
+                        }
+                    }
+                    StoreSubscriptionServerVerdict::Rejected { message } => {
+                        if self
+                            .inboxes
+                            .queue(
+                                pending.client_file_id,
+                                QueuedInboxMessage::without_fds(
+                                    InboxMessage::StoreSubscriptionRejected {
+                                        service: pending.store.service.as_ref().into(),
+                                        store: pending.store.store.as_shared().as_ref().into(),
+                                        subscription_id: pending.subscription_id,
+                                        message,
+                                    },
+                                ),
+                            )
+                            .is_err()
+                        {
+                            return CommandResult(Err(TransportError::ResourceExhausted));
+                        }
+                    }
+                }
+
+                CommandResult(Ok(CommandReply::StoreSubscriptionReplyAccepted))
+            }
+            Command::StoreCreate {
+                service,
+                store,
+                initial_value,
+                public,
+            } => {
+                let Some(service_ref) = self.services.get(service.as_ref()) else {
+                    return CommandResult(Err(TransportError::NoSuchService));
+                };
+                if service_ref.file_id != file {
+                    return CommandResult(Err(TransportError::Unauthorized));
+                }
+
+                let store_name = match StoreName::check(store) {
+                    Ok(store_name) => store_name,
+                    Err(error) => {
+                        return CommandResult(Err(TransportError::InvalidStoreName {
+                            message: error.message.as_ref().into(),
+                        }));
+                    }
+                };
+                let path = StorePath::new(service, store_name);
+                if self
+                    .stores
+                    .try_register(path, initial_value.into(), public)
+                    .is_err()
+                {
+                    return CommandResult(Err(TransportError::StoreAlreadyExists));
+                }
+
+                CommandResult(Ok(CommandReply::StoreCreateAccepted))
+            }
+            Command::StoreUpdate {
+                service,
+                store,
+                value,
+            } => {
+                let Some(service_ref) = self.services.get(service.as_ref()) else {
+                    return CommandResult(Err(TransportError::NoSuchService));
+                };
+                if service_ref.file_id != file {
+                    return CommandResult(Err(TransportError::Unauthorized));
+                }
+
+                let store_name = match StoreName::check(store) {
+                    Ok(store_name) => store_name,
+                    Err(error) => {
+                        return CommandResult(Err(TransportError::InvalidStoreName {
+                            message: error.message.as_ref().into(),
+                        }));
+                    }
+                };
+                let path = StorePath::new(service, store_name);
+                let Some(snapshot) = self.stores.update(&path, value.into()) else {
+                    return CommandResult(Err(TransportError::NoSuchStore));
+                };
+
+                for (subscriber_file, subscription_id) in
+                    self.subscriptions.subscribers_for_store(&path)
+                {
+                    if self
+                        .inboxes
+                        .queue(
+                            subscriber_file,
+                            QueuedInboxMessage::without_fds(
+                                InboxMessage::StoreSubscriptionUpdated {
+                                    service: snapshot.path.service.as_ref().into(),
+                                    store: snapshot.path.store.as_shared().as_ref().into(),
+                                    subscription_id,
+                                    payload: snapshot.current_value.as_ref().into(),
+                                },
+                            ),
+                        )
+                        .is_err()
+                    {
+                        return CommandResult(Err(TransportError::ResourceExhausted));
+                    }
+                }
+
+                CommandResult(Ok(CommandReply::StoreUpdateAccepted))
+            }
+            Command::StoreUnsubscribe { subscription_id } => {
+                if self
+                    .subscriptions
+                    .delete_owned(subscription_id, file)
+                    .is_err()
+                {
+                    return CommandResult(Err(TransportError::NoSuchSubscription));
+                }
+
+                CommandResult(Ok(CommandReply::StoreUnsubscribed))
             }
         }
     }
@@ -217,6 +461,9 @@ impl State {
             !matches_file
         });
         self.reply_tokens.remove_for_file(device.file_id());
+        self.store_subscription_reply_tokens
+            .remove_for_file(device.file_id());
+        self.subscriptions.cleanup_file(device.file_id());
 
         if !closed_services.is_empty() {
             log::info!(
@@ -225,6 +472,29 @@ impl State {
                 device.auth_info,
                 closed_services
             );
+            for service in closed_services {
+                let service: &str = service.as_ref();
+                self.stores.remove_service(service);
+                for (subscriber_file, subscription_id, path) in
+                    self.subscriptions.cleanup_service(service)
+                {
+                    let _ = self.inboxes.queue(
+                        subscriber_file,
+                        QueuedInboxMessage::without_fds(InboxMessage::StoreSubscriptionClosed {
+                            service: path.service.as_ref().into(),
+                            store: path.store.as_shared().as_ref().into(),
+                            subscription_id,
+                            reason: CloseReason::ServiceExited,
+                        }),
+                    );
+                }
+                self.inboxes.broadcast(QueuedInboxMessage::without_fds(
+                    InboxMessage::ServiceClosed {
+                        service: service.into(),
+                        reason: CloseReason::ServiceExited,
+                    },
+                ));
+            }
         } else {
             log::info!(
                 "client at file id {} (auth_info={:#?}) terminated",

@@ -10,7 +10,7 @@ use std::{
 
 pub use motherboardm_protocol::{
     CloseReason, Command, CommandReply, CommandResult, InboxMessage, Origin, RawFd, ReplyStatus,
-    ReplyToken, RequestId, SubscriptionId, TransportError,
+    ReplyToken, RequestId, StoreSubscriptionServerVerdict, SubscriptionId, TransportError,
 };
 use motherboardm_protocol::{CommandEnvelope, MOTHERBOARD_IOCTL_EXECUTE};
 
@@ -139,148 +139,18 @@ impl MotherboardClient {
         }
     }
 
-    pub fn bind_service(&self, name: &str) -> Result<(), ClientError> {
-        match self.execute(Command::BindService { name: name.into() })? {
-            CommandReply::ServiceBound => Ok(()),
-            reply => Err(ClientError::UnexpectedReply(reply)),
-        }
+    pub fn client(&self) -> impl ClientApi + '_ {
+        ClientNamespace { motherboard: self }
     }
 
-    pub fn register_service(&self, name: &str) -> Result<(), ClientError> {
-        self.bind_service(name)
-    }
-
-    pub fn call(
-        &self,
-        service: &str,
-        method: &str,
-        payload: impl Into<Box<[u8]>>,
-        fds: impl Into<Box<[RawFd]>>,
-    ) -> Result<RequestId, ClientError> {
-        let request_id = self.next_request_id();
-        self.call_with_id(service, method, request_id, payload, fds)
-    }
-
-    pub fn call_with_id(
-        &self,
-        service: &str,
-        method: &str,
-        request_id: RequestId,
-        payload: impl Into<Box<[u8]>>,
-        fds: impl Into<Box<[RawFd]>>,
-    ) -> Result<RequestId, ClientError> {
-        match self.execute(Command::Call {
-            service: service.into(),
-            method: method.into(),
-            request_id,
-            payload: payload.into(),
-            fds: fds.into(),
-        })? {
-            CommandReply::Submitted {
-                request_id: submitted,
-            } if submitted == request_id => Ok(submitted),
-            reply => Err(ClientError::UnexpectedReply(reply)),
-        }
-    }
-
-    pub fn reply(
-        &self,
-        reply_token: ReplyToken,
-        status: ReplyStatus,
-        payload: impl Into<Box<[u8]>>,
-        fds: impl Into<Box<[RawFd]>>,
-    ) -> Result<(), ClientError> {
-        match self.execute(Command::Reply {
-            reply_token,
-            status,
-            payload: payload.into(),
-            fds: fds.into(),
-        })? {
-            CommandReply::Replied => Ok(()),
-            reply => Err(ClientError::UnexpectedReply(reply)),
-        }
-    }
-
-    pub fn subscribe(
-        &self,
-        service: &str,
-        topic: &str,
-        payload: impl Into<Box<[u8]>>,
-    ) -> Result<SubscriptionId, ClientError> {
-        let subscription_id = self.next_subscription_id();
-        self.subscribe_with_id(service, topic, subscription_id, payload)
-    }
-
-    pub fn subscribe_with_id(
-        &self,
-        service: &str,
-        store: &str,
-        subscription_id: SubscriptionId,
-        payload: impl Into<Box<[u8]>>,
-    ) -> Result<SubscriptionId, ClientError> {
-        match self.execute(Command::Subscribe {
-            service: service.into(),
-            store: store.into(),
-            subscription_id,
-            payload: payload.into(),
-        })? {
-            CommandReply::SubscriptionSubmitted {
-                subscription_id: submitted,
-            } if submitted == subscription_id => Ok(submitted),
-            reply => Err(ClientError::UnexpectedReply(reply)),
-        }
-    }
-
-    pub fn subscription_reply(
-        &self,
-        reply_token: ReplyToken,
-        accepted: bool,
-        payload: impl Into<Box<[u8]>>,
-    ) -> Result<(), ClientError> {
-        match self.execute(Command::SubscriptionReply {
-            reply_token,
-            accepted,
-            payload: payload.into(),
-        })? {
-            CommandReply::SubscriptionReplied => Ok(()),
-            reply => Err(ClientError::UnexpectedReply(reply)),
-        }
-    }
-
-    pub fn update_store(
-        &self,
-        store: impl Into<Box<str>>,
-        payload: impl Into<Box<[u8]>>,
-        fds: impl Into<Box<[RawFd]>>,
-    ) -> Result<(), ClientError> {
-        match self.execute(Command::UpdateStore {
-            store: store.into(),
-            payload: payload.into(),
-            fds: fds.into(),
-        })? {
-            CommandReply::Emitted => Ok(()),
-            reply => Err(ClientError::UnexpectedReply(reply)),
-        }
-    }
-
-    pub fn cancel(&self, subscription_id: SubscriptionId) -> Result<(), ClientError> {
-        match self.execute(Command::Cancel { subscription_id })? {
-            CommandReply::Cancelled => Ok(()),
-            reply => Err(ClientError::UnexpectedReply(reply)),
-        }
-    }
-
-    pub fn fetch(&self) -> Result<InboxMessage, ClientError> {
-        match self.execute(Command::Fetch)? {
-            CommandReply::Message(message) => Ok(message),
-            reply => Err(ClientError::UnexpectedReply(reply)),
-        }
+    pub fn server(&self) -> impl ServerApi + '_ {
+        ServerNamespace { motherboard: self }
     }
 
     #[cfg(feature = "tokio")]
-    pub async fn fetch_async(&self) -> Result<InboxMessage, ClientError> {
+    async fn fetch_async(&self) -> Result<InboxMessage, ClientError> {
         loop {
-            match self.fetch() {
+            match fetch(self) {
                 Ok(message) => return Ok(message),
                 Err(ClientError::WouldBlock(latch_fd)) => {
                     let latch = tokio::io::unix::AsyncFd::new(latch_fd)?;
@@ -293,6 +163,371 @@ impl MotherboardClient {
                 Err(error) => return Err(error),
             }
         }
+    }
+}
+
+pub trait ClientApi {
+    fn calls(&self) -> impl ClientCallsApi + '_;
+    fn stores(&self) -> impl ClientStoresApi + '_;
+    fn fetch(&self) -> Result<InboxMessage, ClientError>;
+
+    #[cfg(feature = "tokio")]
+    fn fetch_async(
+        &self,
+    ) -> impl core::future::Future<Output = Result<InboxMessage, ClientError>> + '_;
+}
+
+pub trait ServerApi {
+    fn calls(&self) -> impl ServerCallsApi + '_;
+    fn stores(&self) -> impl ServerStoresApi + '_;
+    fn bind_service(&self, name: &str) -> Result<(), ClientError>;
+    fn register_service(&self, name: &str) -> Result<(), ClientError>;
+    fn fetch(&self) -> Result<InboxMessage, ClientError>;
+
+    #[cfg(feature = "tokio")]
+    fn fetch_async(
+        &self,
+    ) -> impl core::future::Future<Output = Result<InboxMessage, ClientError>> + '_;
+}
+
+pub trait ClientCallsApi {
+    fn call(
+        &self,
+        service: &str,
+        method: &str,
+        payload: impl Into<Box<[u8]>>,
+        fds: impl Into<Box<[RawFd]>>,
+    ) -> Result<RequestId, ClientError>;
+
+    fn call_with_id(
+        &self,
+        service: &str,
+        method: &str,
+        request_id: RequestId,
+        payload: impl Into<Box<[u8]>>,
+        fds: impl Into<Box<[RawFd]>>,
+    ) -> Result<RequestId, ClientError>;
+}
+
+pub trait ServerCallsApi {
+    fn reply(
+        &self,
+        reply_token: ReplyToken,
+        status: ReplyStatus,
+        payload: impl Into<Box<[u8]>>,
+        fds: impl Into<Box<[RawFd]>>,
+    ) -> Result<(), ClientError>;
+}
+
+pub trait ClientStoresApi {
+    fn subscribe(
+        &self,
+        service: &str,
+        store: &str,
+        payload: impl Into<Box<[u8]>>,
+    ) -> Result<SubscriptionId, ClientError>;
+
+    fn subscribe_with_id(
+        &self,
+        service: &str,
+        store: &str,
+        subscription_id: SubscriptionId,
+        payload: impl Into<Box<[u8]>>,
+    ) -> Result<SubscriptionId, ClientError>;
+
+    fn unsubscribe(&self, subscription_id: SubscriptionId) -> Result<(), ClientError>;
+}
+
+pub trait ServerStoresApi {
+    fn create(
+        &self,
+        service: &str,
+        store: &str,
+        initial_value: impl Into<Box<[u8]>>,
+        public: bool,
+    ) -> Result<(), ClientError>;
+
+    fn update(
+        &self,
+        service: &str,
+        store: &str,
+        value: impl Into<Box<[u8]>>,
+    ) -> Result<(), ClientError>;
+
+    fn subscription_reply(
+        &self,
+        reply_token: ReplyToken,
+        verdict: StoreSubscriptionServerVerdict,
+    ) -> Result<(), ClientError>;
+
+    fn accept_subscription(&self, reply_token: ReplyToken) -> Result<(), ClientError>;
+
+    fn reject_subscription(
+        &self,
+        reply_token: ReplyToken,
+        message: impl Into<Box<str>>,
+    ) -> Result<(), ClientError>;
+}
+
+pub struct ClientNamespace<'a> {
+    motherboard: &'a MotherboardClient,
+}
+
+pub struct ServerNamespace<'a> {
+    motherboard: &'a MotherboardClient,
+}
+
+pub struct ClientCallsNamespace<'a> {
+    motherboard: &'a MotherboardClient,
+}
+
+pub struct ServerCallsNamespace<'a> {
+    motherboard: &'a MotherboardClient,
+}
+
+pub struct ClientStoresNamespace<'a> {
+    motherboard: &'a MotherboardClient,
+}
+
+pub struct ServerStoresNamespace<'a> {
+    motherboard: &'a MotherboardClient,
+}
+
+impl ClientApi for ClientNamespace<'_> {
+    fn calls(&self) -> impl ClientCallsApi + '_ {
+        ClientCallsNamespace {
+            motherboard: self.motherboard,
+        }
+    }
+
+    fn stores(&self) -> impl ClientStoresApi + '_ {
+        ClientStoresNamespace {
+            motherboard: self.motherboard,
+        }
+    }
+
+    fn fetch(&self) -> Result<InboxMessage, ClientError> {
+        fetch(self.motherboard)
+    }
+
+    #[cfg(feature = "tokio")]
+    fn fetch_async(
+        &self,
+    ) -> impl core::future::Future<Output = Result<InboxMessage, ClientError>> + '_ {
+        self.motherboard.fetch_async()
+    }
+}
+
+impl ServerApi for ServerNamespace<'_> {
+    fn calls(&self) -> impl ServerCallsApi + '_ {
+        ServerCallsNamespace {
+            motherboard: self.motherboard,
+        }
+    }
+
+    fn stores(&self) -> impl ServerStoresApi + '_ {
+        ServerStoresNamespace {
+            motherboard: self.motherboard,
+        }
+    }
+
+    fn bind_service(&self, name: &str) -> Result<(), ClientError> {
+        match self.execute(Command::BindService { name: name.into() })? {
+            CommandReply::ServiceBound => Ok(()),
+            reply => Err(ClientError::UnexpectedReply(reply)),
+        }
+    }
+
+    fn register_service(&self, name: &str) -> Result<(), ClientError> {
+        self.bind_service(name)
+    }
+
+    fn fetch(&self) -> Result<InboxMessage, ClientError> {
+        fetch(self.motherboard)
+    }
+
+    #[cfg(feature = "tokio")]
+    fn fetch_async(
+        &self,
+    ) -> impl core::future::Future<Output = Result<InboxMessage, ClientError>> + '_ {
+        self.motherboard.fetch_async()
+    }
+}
+
+impl ClientCallsApi for ClientCallsNamespace<'_> {
+    fn call(
+        &self,
+        service: &str,
+        method: &str,
+        payload: impl Into<Box<[u8]>>,
+        fds: impl Into<Box<[RawFd]>>,
+    ) -> Result<RequestId, ClientError> {
+        let request_id = self.motherboard.next_request_id();
+        self.call_with_id(service, method, request_id, payload, fds)
+    }
+
+    fn call_with_id(
+        &self,
+        service: &str,
+        method: &str,
+        request_id: RequestId,
+        payload: impl Into<Box<[u8]>>,
+        fds: impl Into<Box<[RawFd]>>,
+    ) -> Result<RequestId, ClientError> {
+        match self.motherboard.execute(Command::FunctionCall {
+            service: service.into(),
+            method: method.into(),
+            request_id,
+            payload: payload.into(),
+            fds: fds.into(),
+        })? {
+            CommandReply::FunctionCallAccepted {
+                request_id: submitted,
+            } if submitted == request_id => Ok(submitted),
+            reply => Err(ClientError::UnexpectedReply(reply)),
+        }
+    }
+}
+
+impl ServerCallsApi for ServerCallsNamespace<'_> {
+    fn reply(
+        &self,
+        reply_token: ReplyToken,
+        status: ReplyStatus,
+        payload: impl Into<Box<[u8]>>,
+        fds: impl Into<Box<[RawFd]>>,
+    ) -> Result<(), ClientError> {
+        match self.motherboard.execute(Command::FunctionCallReply {
+            reply_token,
+            status,
+            payload: payload.into(),
+            fds: fds.into(),
+        })? {
+            CommandReply::FunctionCallReplyAccepted => Ok(()),
+            reply => Err(ClientError::UnexpectedReply(reply)),
+        }
+    }
+}
+
+impl ClientStoresApi for ClientStoresNamespace<'_> {
+    fn subscribe(
+        &self,
+        service: &str,
+        store: &str,
+        payload: impl Into<Box<[u8]>>,
+    ) -> Result<SubscriptionId, ClientError> {
+        let subscription_id = self.motherboard.next_subscription_id();
+        self.subscribe_with_id(service, store, subscription_id, payload)
+    }
+
+    fn subscribe_with_id(
+        &self,
+        service: &str,
+        store: &str,
+        subscription_id: SubscriptionId,
+        payload: impl Into<Box<[u8]>>,
+    ) -> Result<SubscriptionId, ClientError> {
+        match self.motherboard.execute(Command::StoreSubscribe {
+            service: service.into(),
+            store: store.into(),
+            subscription_id,
+            payload: payload.into(),
+        })? {
+            CommandReply::StoreSubscriptionAccepted {
+                subscription_id: submitted,
+            } if submitted == subscription_id => Ok(submitted),
+            reply => Err(ClientError::UnexpectedReply(reply)),
+        }
+    }
+
+    fn unsubscribe(&self, subscription_id: SubscriptionId) -> Result<(), ClientError> {
+        match self
+            .motherboard
+            .execute(Command::StoreUnsubscribe { subscription_id })?
+        {
+            CommandReply::StoreUnsubscribed => Ok(()),
+            reply => Err(ClientError::UnexpectedReply(reply)),
+        }
+    }
+}
+
+impl ServerStoresApi for ServerStoresNamespace<'_> {
+    fn create(
+        &self,
+        service: &str,
+        store: &str,
+        initial_value: impl Into<Box<[u8]>>,
+        public: bool,
+    ) -> Result<(), ClientError> {
+        match self.motherboard.execute(Command::StoreCreate {
+            service: service.into(),
+            store: store.into(),
+            initial_value: initial_value.into(),
+            public,
+        })? {
+            CommandReply::StoreCreateAccepted => Ok(()),
+            reply => Err(ClientError::UnexpectedReply(reply)),
+        }
+    }
+
+    fn update(
+        &self,
+        service: &str,
+        store: &str,
+        value: impl Into<Box<[u8]>>,
+    ) -> Result<(), ClientError> {
+        match self.motherboard.execute(Command::StoreUpdate {
+            service: service.into(),
+            store: store.into(),
+            value: value.into(),
+        })? {
+            CommandReply::StoreUpdateAccepted => Ok(()),
+            reply => Err(ClientError::UnexpectedReply(reply)),
+        }
+    }
+
+    fn subscription_reply(
+        &self,
+        reply_token: ReplyToken,
+        verdict: StoreSubscriptionServerVerdict,
+    ) -> Result<(), ClientError> {
+        match self.motherboard.execute(Command::StoreSubscriptionReply {
+            reply_token,
+            verdict,
+        })? {
+            CommandReply::StoreSubscriptionReplyAccepted => Ok(()),
+            reply => Err(ClientError::UnexpectedReply(reply)),
+        }
+    }
+
+    fn accept_subscription(&self, reply_token: ReplyToken) -> Result<(), ClientError> {
+        self.subscription_reply(reply_token, StoreSubscriptionServerVerdict::Accepted)
+    }
+
+    fn reject_subscription(
+        &self,
+        reply_token: ReplyToken,
+        message: impl Into<Box<str>>,
+    ) -> Result<(), ClientError> {
+        self.subscription_reply(
+            reply_token,
+            StoreSubscriptionServerVerdict::Rejected {
+                message: message.into(),
+            },
+        )
+    }
+}
+
+fn fetch(motherboard: &MotherboardClient) -> Result<InboxMessage, ClientError> {
+    match motherboard.execute(Command::InboxNextMessage)? {
+        CommandReply::InboxMessagePopped(message) => Ok(message),
+        reply => Err(ClientError::UnexpectedReply(reply)),
+    }
+}
+
+impl ServerNamespace<'_> {
+    fn execute(&self, command: Command) -> Result<CommandReply, ClientError> {
+        self.motherboard.execute(command)
     }
 }
 

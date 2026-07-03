@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub struct Message(pub QueuedInboxMessage);
-
+#[derive(Clone)]
 pub struct QueuedInboxMessage {
     message: InboxMessage,
     fds: Array<ARef<File>>,
@@ -39,9 +39,8 @@ impl QueuedInboxMessage {
         let installed_fds = install_fds(self.fds)?;
 
         match &mut self.message {
-            InboxMessage::CallRequest { fds, .. }
-            | InboxMessage::CallReply { fds, .. }
-            | InboxMessage::SubscriptionEvent { fds, .. } => {
+            InboxMessage::FunctionCallRequest { fds, .. }
+            | InboxMessage::FunctionCallReply { fds, .. } => {
                 *fds = installed_fds;
             }
             _ => {}
@@ -185,7 +184,11 @@ impl Inboxes {
             FakeFilePollEvents::empty()
         }
     }
-
+    pub fn broadcast(&mut self, message: QueuedInboxMessage) {
+        for inbox in self.0.values_mut() {
+            inbox.as_mut().queue(message.clone());
+        }
+    }
     pub fn close_inbox(&mut self, file: FileId) {
         self.0.remove(&file);
     }

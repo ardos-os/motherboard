@@ -1,0 +1,10 @@
+[package]
+name = "motherboard-ardos-ui-integration"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ardos-ui = { git = "https://github.com/ardos-os/ardos-ui" }
+libc = "0.2.186"
+motherboard-client = { path = "../client" }
+motherboardm-protocol = { path = "../protocol", features = ["std"] }

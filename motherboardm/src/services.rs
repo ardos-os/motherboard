@@ -55,7 +55,7 @@ pub fn clone_files_from_raw_fds(
         .map(Into::into)
         .map_err(RequestQueueError::InvalidFds)
 }
-
+pub mod store;
 pub struct Service {
     /// Points to the original open connection and thus the original process who registered this service
     pub file_id: FileId,
@@ -91,7 +91,7 @@ impl Service {
             .drain(..)
             .map(|qr| {
                 QueuedInboxMessage::new(
-                    InboxMessage::CallRequest {
+                    InboxMessage::FunctionCallRequest {
                         service: service_name.as_ref().into(),
                         method: qr.method.as_ref().into(),
                         request_id: qr.request_id,

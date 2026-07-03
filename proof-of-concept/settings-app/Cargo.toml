@@ -1,0 +1,9 @@
+[package]
+name = "settings-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ardos-ui = { git = "https://github.com/ardos-os/ardos-ui" }
+env_logger = "0.11.8"
+motherboard-ardos-ui-integration = { path = "../../motherboard-ardos-ui-integration" }

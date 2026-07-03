@@ -30,15 +30,22 @@ pub struct Origin {
     pub gid: u32,
     pub is_trusted: bool,
 }
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum StoreSubscriptionServerVerdict {
+    Accepted,
+    Rejected { message: Str },
+}
 
 /// Operations submitted by userspace to motherboardm.
+///
+/// These commands are encoded by `postcard` and `serde`, the encoded command buffer then is sent to `motherboardm` through ioctl.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Command {
-    /// Binds the current open motherboard connection as the owner of a service name.
+    /// Binds the current open motherboard connection as the owner of a service name. (Server side)
     BindService { name: Str },
 
-    /// Calls an opaque service method asynchronously.
-    Call {
+    /// Calls an opaque service method asynchronously. (Client Side)
+    FunctionCall {
         service: Str,
         method: Str,
         request_id: RequestId,
@@ -46,60 +53,106 @@ pub enum Command {
         fds: Array<RawFd>,
     },
 
-    /// Replies to a service call or subscription request using a kernel-issued token.
-    Reply {
+    /// Replies to a service call or subscription request using a kernel-issued token. (Server side)
+    FunctionCallReply {
         reply_token: ReplyToken,
         status: ReplyStatus,
         payload: Data,
         fds: Array<RawFd>,
     },
 
-    /// Requests a state/event subscription from a service.
-    Subscribe {
+    /// Requests a store subscription from a service. (Client Side)
+    StoreSubscribe {
         service: Str,
         store: Str,
         subscription_id: SubscriptionId,
         payload: Data,
     },
 
-    /// Accepts or rejects a pending subscription request.
-    SubscriptionReply {
+    /// Accepts or rejects a pending subscription request. (Server Side)
+    StoreSubscriptionReply {
         reply_token: ReplyToken,
-        accepted: bool,
-        payload: Data,
+        verdict: StoreSubscriptionServerVerdict,
     },
 
-    /// Emits an update to an accepted subscription.
-    UpdateStore {
+    /// Creates a new store inside a service with an initial value. (Server Side)
+    ///
+    /// the `public` flag tells the module whenever it needs to ask the server for permission to allow subscriptions or if it can immediately subscribe without asking anything.
+    StoreCreate {
+        service: Str,
         store: Str,
-        payload: Data,
-        fds: Array<RawFd>,
+        initial_value: Data,
+        public: bool,
+    },
+    /// Updates the value of a store, notifying all listeners about the change. (Server Side)
+    StoreUpdate {
+        service: Str,
+        store: Str,
+        value: Data,
     },
 
-    /// Cancels a previously requested or accepted subscription.
-    Cancel { subscription_id: SubscriptionId },
+    /// Cancels a previously requested or accepted subscription. (Client Side)
+    StoreUnsubscribe { subscription_id: SubscriptionId },
 
-    /// Fetches the next asynchronous message for the current open connection.
-    Fetch,
+    /// Fetches the next asynchronous message for the current open connection. (Client and Server Side)
+    InboxNextMessage,
 }
 
 /// Immediate kernel response to an ioctl command.
+///
+/// `CommandReply` is received encoded from a file descriptor returned by the `ioctl` call which is then read until EOF and decoded with `postcard` into this type.
+///
+/// # Name conventions
+///
+/// There are some name conventions to the variants names for consistency and to know exactly what each thing means.
+///
+/// ## ...Accepted
+///
+/// Like http code `202 Accepted`, this means the request was received but not fully processed yet. It will be processed in the background asynchronously.
+///
+/// ## Store...
+///
+/// Store related command replies always start with `Store`
+///
+/// ## StoreSubscription...
+///
+///
+/// Store subscription related commands always start with `StoreSubscription`
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum CommandReply {
+    // --------- RPC Module ----------
+    /// Response to [`Command::BindService`]
     ServiceBound,
-    Submitted { request_id: RequestId },
-    SubscriptionSubmitted { subscription_id: SubscriptionId },
-    Replied,
-    SubscriptionReplied,
-    Emitted,
-    Cancelled,
-    Message(InboxMessage),
+    /// Confirmation to [`Command::FunctionCall`]
+    FunctionCallAccepted {
+        request_id: RequestId,
+    },
+    FunctionCallReplyAccepted,
+    // --------- Store Module ----------
+    /// Confirmation to [`Command::StoreSubscribe`]
+    StoreSubscriptionAccepted {
+        subscription_id: SubscriptionId,
+    },
+    /// Confirmation to [`Command::StoreSubscriptionReply`]
+    StoreSubscriptionReplyAccepted,
+    /// Confirmation to [`Command::StoreCreate`]
+    StoreCreateAccepted,
+    /// Confirmation to [`Command::StoreUpdate`]
+    StoreUpdateAccepted,
+    /// Confirmation to [`Command::StoreUnsubscribe`]
+    StoreUnsubscribed,
+
+    // -----------   Inbox  ------------
+    /// Result of calling [`Command::InboxNextMessage`] while there are messages in the inbox.
+    InboxMessagePopped(InboxMessage),
 }
 
 /// Messages delivered asynchronously through a connection inbox.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum InboxMessage {
-    CallRequest {
+    // RPC
+    /// A function call came from a client.
+    FunctionCallRequest {
         service: Str,
         method: Str,
         request_id: RequestId,
@@ -108,41 +161,61 @@ pub enum InboxMessage {
         payload: Data,
         fds: Array<RawFd>,
     },
-    CallReply {
+    /// The server responded to a previous function call.
+    FunctionCallReply {
         request_id: RequestId,
         status: ReplyStatus,
         payload: Data,
         fds: Array<RawFd>,
     },
+
+    // Store
+    /// A client is trying to subscribe to a store in this service.
     SubscribeRequest {
         service: Str,
-        topic: Str,
+        store: Str,
         subscription_id: SubscriptionId,
         reply_token: ReplyToken,
         origin: Origin,
         payload: Data,
     },
-    SubscriptionAccepted {
-        subscription_id: SubscriptionId,
-        payload: Data,
-    },
-    SubscriptionRejected {
-        subscription_id: SubscriptionId,
-        payload: Data,
-    },
-    SubscriptionEvent {
-        subscription_id: SubscriptionId,
-        payload: Data,
-        fds: Array<RawFd>,
-    },
-    SubscriptionClosed {
-        subscription_id: SubscriptionId,
-        reason: CloseReason,
-    },
-    ServiceClosed {
+
+    /// The server accepted the subscription to a store
+    StoreSubscriptionAccepted {
         service: Str,
+        store: Str,
+        subscription_id: SubscriptionId,
+        /// The last value the module has retained from the last update the server sent
+        current_value: Data,
+        /// Monotonic timestamp assigned by the module when this value was stored.
+        last_updated_timestamp: isize,
+    },
+    /// The server rejected the subscription
+    StoreSubscriptionRejected {
+        service: Str,
+        store: Str,
+        subscription_id: SubscriptionId,
+        message: Str,
+    },
+
+    /// A store you were subscribed to just updated
+    StoreSubscriptionUpdated {
+        service: Str,
+        store: Str,
+        subscription_id: SubscriptionId,
+        payload: Data,
+    },
+
+    /// Store subscription was terminated by the client or the server
+    StoreSubscriptionClosed {
+        service: Str,
+        store: Str,
+        subscription_id: SubscriptionId,
         reason: CloseReason,
     },
+
+    /// The server behind the service closed unexpectedly and the service is no longer available
+    ServiceClosed { service: Str, reason: CloseReason },
 }
 
 /// Service-level status for asynchronous replies.
@@ -170,13 +243,21 @@ pub enum TransportError {
     InvalidServiceName { message: Str },
     #[error("Service does not exist")]
     NoSuchService,
+    #[error("Store does not exist")]
+    NoSuchStore,
+    #[error("Store already exists")]
+    StoreAlreadyExists,
+    #[error("Store name is invalid")]
+    InvalidStoreName { message: Str },
+    #[error("A store subscription with the same id already exists for this connection")]
+    SubscriptionIdConflict,
     #[error("An attached userspace file descriptor number is invalid")]
     InvalidFileDescriptor,
     #[error("The kernel could not allocate a required transport resource")]
     ResourceExhausted,
     #[error("Reply token is invalid, expired, already consumed, or owned by another connection")]
     InvalidReplyToken,
-    #[error("Subscription does not exist")]
+    #[error("Store Subscription does not exist")]
     NoSuchSubscription,
     #[error("The inbox is empty; poll the returned latch fd before fetching again")]
     WouldBlock { latch_fd: RawFd },

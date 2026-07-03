@@ -15,8 +15,9 @@ privileged or semi-privileged system services through one shared transport.
     - Kernel-attested caller identity metadata: the server implementing the service just knows who called it because it comes directly from the kernel, the caller can never forge it even if it is inside a user/pid namespace or a container.
 - **OS-level dependency injection**
     - Apps do not know what process is implementing what service, allowing the implementation (server) to be swapped out entirely without breaking anything
-- **Reactive state and state management** (Not implemented yet)
+- **Reactive state and state management**
     - Services can contain stores which are variables which contain reactive data and can be watched and read by clients. Whenever the server updates the store's value, everyone is notified automatically.
+    - Store subscriptions are now implemented and are exposed to Ardos UI through `use_motherboard_store`.
 - **Signals** allow clients to receive events from services like for example when the user clicks on a button on a notification the app sent earlier. (not implemented yet)
 
 
@@ -40,10 +41,10 @@ resembling Netflix infrastructure.
 
 ```mermaid
 flowchart LR
-    App[Client process] -->|Call: service, method, payload, fds| Bus["/dev/services"]
-    Bus -->|CallRequest: origin, reply_token, payload, fds| Server[System service]
-    Server -->|Reply: reply_token, status, payload, fds| Bus
-    Bus -->|CallReply: request_id, status, payload, fds| App
+    App[Client process] -->|FunctionCall / StoreSubscribe| Bus["/dev/services"]
+    Bus -->|InboxMessage| Server[System service]
+    Server -->|FunctionCallReply / StoreUpdate| Bus
+    Bus -->|InboxMessage| App
 ```
 
 Services are opaque interfaces which privileged processes (servers) can provide implementations of.
@@ -60,30 +61,39 @@ This is highly inspired by android where a lot of android java APIs actually map
 
 ```text
 .
-├── motherboardm/   # Rust Linux kernel module
-├── protocol/       # Shared command, reply, and message types
-└── client/         # Userspace Rust client library and examples
+├── Cargo.toml                         # userspace workspace
+├── client/                            # Userspace Rust client library and examples
+├── docs/                              # Design notes
+├── motherboard-ardos-ui-integration/  # Ardos UI integration helpers
+├── motherboardm/                      # Rust Linux kernel module
+├── proof-of-concept/                  # End-to-end demos
+└── protocol/                          # Shared command, reply, and message types
 ```
+
+The parent Cargo workspace contains the userspace crates. `motherboardm` is
+excluded from that workspace because kernel modules are built with `cargo-nok`,
+but it still imports the shared `protocol` crate.
 
 ## Protocol Model
 
 The shared protocol lives in `protocol/src/commands.rs`.
 
-The core command flow is:
+The core function-call flow is:
 
 1. A service opens `/dev/services` and sends `BindService { name }`.
-2. A client opens `/dev/services` and sends `Call { service, method,
+2. A client opens `/dev/services` and sends `FunctionCall { service, method,
    request_id, payload, fds }`.
-3. The kernel queues a `CallRequest` in the service inbox and returns
-   `Submitted { request_id }` to the client.
-4. The service repeatedly calls `Fetch`.
-5. If work is available, `Fetch` returns `CallRequest { reply_token, origin,
-   payload, fds, ... }`.
-6. If no work is available, `Fetch` returns `WouldBlock { latch_fd }`; userspace
-   polls the latch fd and then fetches again.
-7. The service replies with `Reply { reply_token, status, payload, fds }`.
-8. The client receives `CallReply { request_id, status, payload, fds }` through
-   its own inbox.
+3. The kernel queues a `FunctionCallRequest` in the service inbox and returns
+   `FunctionCallAccepted { request_id }` to the client.
+4. The service repeatedly calls `InboxNextMessage`.
+5. If work is available, `InboxNextMessage` returns `FunctionCallRequest {
+   reply_token, origin, payload, fds, ... }`.
+6. If no work is available, the command returns `WouldBlock { latch_fd }`;
+   userspace polls the latch fd and then fetches again.
+7. The service replies with `FunctionCallReply { reply_token, status, payload,
+   fds }`.
+8. The client receives `FunctionCallReply { request_id, status, payload, fds }`
+   through its own inbox.
 
 The `reply_token` is kernel-issued and single-use. It prevents a service from
 replying to the wrong client or forging a reply to a request it was never given.
@@ -97,24 +107,61 @@ sequenceDiagram
     S->>K: BindService { name }
     K-->>S: ServiceBound
 
-    C->>K: Call { service, method, request_id, payload, fds }
-    K-->>C: Submitted { request_id }
+    C->>K: FunctionCall { service, method, request_id, payload, fds }
+    K-->>C: FunctionCallAccepted { request_id }
 
-    S->>K: Fetch
-    K-->>S: CallRequest { reply_token, origin, payload, fds }
+    S->>K: InboxNextMessage
+    K-->>S: FunctionCallRequest { reply_token, origin, payload, fds }
 
-    S->>K: Reply { reply_token, status, payload, fds }
-    K-->>S: Replied
+    S->>K: FunctionCallReply { reply_token, status, payload, fds }
+    K-->>S: FunctionCallReplyAccepted
 
-    C->>K: Fetch
-    K-->>C: CallReply { request_id, status, payload, fds }
+    C->>K: InboxNextMessage
+    K-->>C: FunctionCallReply { request_id, status, payload, fds }
 ```
+
+## Stores
+
+Stores are service-owned retained values. Clients subscribe to stores and then
+receive the current value plus every later update in their inbox.
+
+The store command flow is:
+
+1. A service sends `StoreCreate { service, store, initial_value, public }`.
+2. A client sends `StoreSubscribe { service, store, subscription_id, payload }`.
+3. For public stores, the kernel immediately queues
+   `StoreSubscriptionAccepted { current_value, ... }` in the client's inbox.
+4. For private stores, the service receives `SubscribeRequest` and replies with
+   `StoreSubscriptionReply`.
+5. When the service sends `StoreUpdate`, every subscribed client receives
+   `StoreSubscriptionUpdated`.
+
+```mermaid
+sequenceDiagram
+    participant A as App A
+    participant B as App B
+    participant K as motherboardm
+    participant S as SettingsManager
+
+    S->>K: StoreCreate { store: "theme", initial_value: "light", public: true }
+    A->>K: StoreSubscribe { subscription_id: 1 }
+    K-->>A: StoreSubscriptionAccepted { current_value: "light" }
+    B->>K: StoreSubscribe { subscription_id: 1 }
+    K-->>B: StoreSubscriptionAccepted { current_value: "light" }
+    S->>K: StoreUpdate { store: "theme", value: "dark" }
+    K-->>A: StoreSubscriptionUpdated { payload: "dark" }
+    K-->>B: StoreSubscriptionUpdated { payload: "dark" }
+```
+
+`SubscriptionId` values are unique per open `/dev/services` connection. The
+kernel stores subscriptions by both the connection id and the subscription id,
+so two clients can both use `SubscriptionId(1)` without colliding.
 
 ## Latch FDs
 
 `motherboardm` avoids blocking inside the ioctl itself.
 
-When an inbox is empty, `Fetch` returns:
+When an inbox is empty, `InboxNextMessage` returns:
 
 ```rust
 TransportError::WouldBlock { latch_fd }
@@ -125,7 +172,7 @@ That `latch_fd` is a temporary, one-way readiness object:
 - userspace polls it for readability;
 - the kernel trips it when new inbox work arrives;
 - once tripped, it stays readable forever;
-- userspace should close it and call `Fetch` again.
+- userspace should close it and call `InboxNextMessage` again.
 
 This makes the transport friendly to `poll`, `epoll`, and async runtimes without
 requiring every process to spin in a busy loop.
@@ -135,7 +182,7 @@ requiring every process to spin in a busy loop.
 File descriptors are carried inline in protocol messages:
 
 ```rust
-Command::Call {
+Command::FunctionCall {
     service,
     method,
     request_id,
@@ -181,7 +228,7 @@ motherboardm/target/target/debug/motherboardm.ko
 Check the userspace client and examples:
 
 ```bash
-cargo check --manifest-path client/Cargo.toml --examples
+cargo check --workspace
 ```
 
 Format all Rust crates:
@@ -189,6 +236,7 @@ Format all Rust crates:
 ```bash
 cargo fmt --manifest-path protocol/Cargo.toml
 cargo fmt --manifest-path client/Cargo.toml
+cargo fmt --manifest-path motherboard-ardos-ui-integration/Cargo.toml
 cargo fmt --manifest-path motherboardm/Cargo.toml
 ```
 
@@ -241,18 +289,18 @@ ioctl protocol.
 Here's an example of a simple RPC call to an `EchoService`
 
 ```rust
-use motherboard_client::MotherboardClient;
+use motherboard_client::{ClientApi, ClientCallsApi, MotherboardClient};
 
 let bus = MotherboardClient::open()?;
-let request_id = bus.call(
+let request_id = bus.client().calls().call(
     "EchoService", // service name
     "echo", // function name
-    b"hello".into(), // parameters, the server and client can agree on any format for the parameters, it's just an array of bytes
-    [].into(), // file descriptors, in this case none
+    b"hello".to_vec(), // payload bytes
+    Box::<[u32]>::default(), // file descriptors, in this case none
 )?; // calls EchoService.echo("hello")
 
 loop {
-    match bus.fetch() {
+    match bus.client().fetch() {
         Ok(message) => {
             println!("{message:?}");
             break;
@@ -269,7 +317,43 @@ loop {
 With the optional `tokio` feature, the client crate also exposes
 `fetch_async()` which uses tokio's reactor to await the latch file descriptor automatically.
 
+## Ardos UI Integration
 
+The `motherboard-ardos-ui-integration` crate bridges stores into Ardos UI. It
+owns one motherboard connection and dispatcher thread through `MotherboardUi`,
+and exposes a hook for subscribing to stores:
+
+```rust
+use motherboard_ardos_ui_integration::{MotherboardUi, use_motherboard_store};
+
+let motherboard = ardos_ui::use_memo(
+    || MotherboardUi::open().expect("failed to open /dev/services"),
+    (),
+);
+
+let theme = use_motherboard_store(
+    (*motherboard).clone(),
+    "SettingsManager",
+    "theme",
+);
+```
+
+The hook returns `Option<Arc<[u8]>>`: `None` means the first snapshot has not
+arrived yet, and `Some(value)` is the latest retained store value. Cloning the
+value only bumps an `Arc` reference count.
+
+The settings proof of concept demonstrates the full flow:
+
+```bash
+cd proof-of-concept/settings-service
+cargo run
+
+cd proof-of-concept/settings-app
+cargo run
+```
+
+Open two settings app instances, click the theme toggle in one, and both app
+windows update through the `SettingsManager/theme` store.
 
 ## License
 

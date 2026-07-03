@@ -24,5 +24,5 @@ module! {
     name: "motherboardm",
     authors: ["coffeeispower"],
     description: "Ardos service locator kernel module",
-    license: "GPL-3.0",
+    license: "GPL",
 }

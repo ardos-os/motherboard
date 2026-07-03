@@ -7,18 +7,20 @@ use std::{
     time::Instant,
 };
 
-use motherboard_client::{ClientError, InboxMessage, MotherboardClient, ReplyStatus};
+use motherboard_client::{
+    ClientError, InboxMessage, MotherboardClient, ReplyStatus, ServerApi, ServerCallsApi,
+};
 
 const SERVICE_NAME: &str = "EchoService";
 
 fn main() -> Result<(), Box<dyn Error>> {
     let motherboard = Arc::new(MotherboardClient::open()?);
-    motherboard.bind_service(SERVICE_NAME)?;
+    motherboard.server().bind_service(SERVICE_NAME)?;
     println!("{SERVICE_NAME} bound; waiting for requests");
 
     loop {
-        match motherboard.fetch() {
-            Ok(InboxMessage::CallRequest {
+        match motherboard.server().fetch() {
+            Ok(InboxMessage::FunctionCallRequest {
                 method,
                 reply_token,
                 payload,
@@ -40,6 +42,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 });
 
                 motherboard
+                    .server()
+                    .calls()
                     .reply(
                         reply_token,
                         ReplyStatus::Ok,

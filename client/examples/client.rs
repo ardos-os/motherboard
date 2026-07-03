@@ -6,7 +6,9 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use motherboard_client::{ClientError, InboxMessage, MotherboardClient, ReplyStatus};
+use motherboard_client::{
+    ClientApi, ClientCallsApi, ClientError, InboxMessage, MotherboardClient, ReplyStatus,
+};
 
 const SERVICE_NAME: &str = "EchoService";
 
@@ -14,7 +16,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let motherboard = MotherboardClient::open()?;
     let shared_file = create_example_file()?;
 
-    let mut pending = vec![motherboard.call(
+    let mut pending = vec![motherboard.client().calls().call(
         SERVICE_NAME,
         "ReadFd",
         b"please read the attached fd".to_vec().into_boxed_slice(),
@@ -26,8 +28,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         if pending.is_empty() {
             return Ok(());
         }
-        match motherboard.fetch() {
-            Ok(InboxMessage::CallReply {
+        match motherboard.client().fetch() {
+            Ok(InboxMessage::FunctionCallReply {
                 request_id: reply_id,
                 status: ReplyStatus::Ok,
                 payload,
@@ -37,7 +39,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 println!("server read: {}", String::from_utf8_lossy(&payload));
                 dbg!(Instant::now());
             }
-            Ok(InboxMessage::CallReply {
+            Ok(InboxMessage::FunctionCallReply {
                 request_id: reply_id,
                 status: ReplyStatus::Error { code, message },
                 payload,
