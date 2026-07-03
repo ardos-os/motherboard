@@ -354,4 +354,4 @@ This video shows a settings app calling a setter function and both apps reacting
 
 ## License
 
-See [LICENSE.md](LICENSE.md) file.
+See [LICENSE](LICENSE) file.
