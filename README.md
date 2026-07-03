@@ -25,6 +25,19 @@ The current userspace entry point is `/dev/services`, where consumers need to op
 > Status: early prototype. This is kernel code, and panics or incorrect unsafe
 > code can crash the running system. Develop and load it carefully.
 
+## Proof of Concept
+
+The settings app proof of concept demonstrates the full flow:
+
+
+
+https://github.com/user-attachments/assets/f2569c94-2d06-4223-8f0b-f4e80c27efeb
+
+
+
+This video shows a settings app calling a setter function and both apps reacting to state changes in the settings service automatically.
+
+
 ## Why
 
 Unix domain sockets already solve a lot of IPC problems, in fact, most of linux is implemented using them. But they expose a
@@ -340,17 +353,6 @@ let theme = use_motherboard_store(
 The hook returns `Option<Arc<[u8]>>`: `None` means the first snapshot has not
 arrived yet, and `Some(value)` is the latest retained store value. Cloning the
 value only bumps an `Arc` reference count.
-# Proof of Concept
-
-The settings app proof of concept demonstrates the full flow:
-
-
-
-https://github.com/user-attachments/assets/f2569c94-2d06-4223-8f0b-f4e80c27efeb
-
-
-
-This video shows a settings app calling a setter function and both apps reacting to state changes in the settings service automatically.
 
 ## License
 
