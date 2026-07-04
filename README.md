@@ -37,6 +37,24 @@ https://github.com/user-attachments/assets/f2569c94-2d06-4223-8f0b-f4e80c27efeb
 
 This video shows a settings app calling a setter function and both apps reacting to state changes in the settings service automatically.
 
+## Local Benchmark
+
+These numbers were measured on a development laptop with the CPU set to
+performance mode. Each benchmark used one service process and one client process,
+10,000 measured round trips, 100 warmup round trips, an empty payload, and
+sequential request/reply calls over a persistent connection.
+
+| Transport | Throughput | Avg | P50 | P90 | P99 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `motherboardm` | 117,603.71 round-trips/sec | 8.48 us | 6.34 us | 13.40 us | 16.04 us |
+| D-Bus, best of 3 | 30,203.18 round-trips/sec | 33.06 us | 29.08 us | 43.15 us | 78.16 us |
+
+In this run, `motherboardm` was about 3.9x higher throughput than D-Bus, with
+about 3.9x lower average latency and 4.6x lower median latency. The D-Bus
+comparison used `dbus-daemon` through `dbus-run-session` and a Rust
+`dbus`/`dbus-crossroads` service implementing a `Ping(Vec<u8>) -> Vec<u8>`
+method.
+
 
 ## Why
 

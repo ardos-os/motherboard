@@ -92,8 +92,8 @@ impl Service {
             .map(|qr| {
                 QueuedInboxMessage::new(
                     InboxMessage::FunctionCallRequest {
-                        service: service_name.as_ref().into(),
-                        method: qr.method.as_ref().into(),
+                        service: service_name.as_str().into(),
+                        method: qr.method.as_str().into(),
                         request_id: qr.request_id,
                         reply_token: reply_tokens.create(
                             qr.client_file_id,

@@ -10,7 +10,7 @@ use std::{
 
 pub use motherboardm_protocol::{
     CloseReason, Command, CommandReply, CommandResult, InboxMessage, Origin, RawFd, ReplyStatus,
-    ReplyToken, RequestId, StoreSubscriptionServerVerdict, SubscriptionId, TransportError,
+    ReplyToken, RequestId, StoreSubscriptionServerVerdict, Str, SubscriptionId, TransportError,
 };
 use motherboardm_protocol::{CommandEnvelope, MOTHERBOARD_IOCTL_EXECUTE};
 
@@ -265,7 +265,7 @@ pub trait ServerStoresApi {
     fn reject_subscription(
         &self,
         reply_token: ReplyToken,
-        message: impl Into<Box<str>>,
+        message: impl Into<Str>,
     ) -> Result<(), ClientError>;
 }
 
@@ -507,7 +507,7 @@ impl ServerStoresApi for ServerStoresNamespace<'_> {
     fn reject_subscription(
         &self,
         reply_token: ReplyToken,
-        message: impl Into<Box<str>>,
+        message: impl Into<Str>,
     ) -> Result<(), ClientError> {
         self.subscription_reply(
             reply_token,

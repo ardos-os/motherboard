@@ -17,7 +17,7 @@ pub mod services;
 pub mod state;
 pub mod utils;
 pub type SharedData = Arc<[u8]>;
-pub type SharedStr = Arc<str>;
+pub type SharedStr = motherboardm_protocol::Str;
 
 module! {
     type: module::MotherboardModule,

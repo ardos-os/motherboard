@@ -44,6 +44,10 @@ impl StoreName {
     pub fn as_shared(&self) -> &SharedStr {
         &self.0
     }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
 }
 
 impl Deref for StoreName {
@@ -127,7 +131,7 @@ impl StoreMap {
     pub fn remove_service(&mut self, service: &str) -> Vec<StorePath> {
         let mut removed = Vec::new();
         self.stores.retain(|path, _| {
-            let keep = path.service.as_ref() != service;
+            let keep = path.service.as_str() != service;
             if !keep {
                 removed.push(path.clone());
             }
@@ -262,7 +266,7 @@ impl Subscriptions {
     pub fn cleanup_service(&mut self, service: &str) -> Vec<(FileId, SubscriptionId, StorePath)> {
         let mut removed = Vec::new();
         self.map.retain(|(_, id), data| {
-            let keep = data.store.service.as_ref() != service;
+            let keep = data.store.service.as_str() != service;
             if !keep {
                 removed.push((data.file, *id, data.store.clone()));
             }

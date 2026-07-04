@@ -9,6 +9,7 @@ unexpected_cfgs = { level = "allow" }
 [dependencies]
 postcard = { version = "1.0", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+smol_str = { version = "0.3.6", default-features = false, features = ["serde"] }
 thiserror = { version = "2.0.18", default-features = false }
 hashbrown = { version = "0.17.1", default-features = false, features = ["default-hasher"]}
 serde_json = {version = "1.0.150", default-features = false, features = ["alloc", "raw_value"]}

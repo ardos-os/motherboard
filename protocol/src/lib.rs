@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::commands::{
     CloseReason, Command, CommandReply, InboxMessage, Origin, RawFd, ReplyStatus, ReplyToken,
-    RequestId, StoreSubscriptionServerVerdict, SubscriptionId, TransportError,
+    RequestId, StoreSubscriptionServerVerdict, Str, SubscriptionId, TransportError,
 };
 pub const ABI_VERSION: u32 = 1;
 

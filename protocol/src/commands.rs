@@ -1,8 +1,12 @@
 use alloc::boxed::Box;
 use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
 
-/// Owned str stored on the heap.
-pub type Str = Box<str>;
+/// Small-string optimized owned string.
+///
+/// `SmolStr` stores short strings inline, which fits most service, method,
+/// store, status-code, and error-name values without a kernel heap allocation.
+pub type Str = SmolStr;
 /// Owned array stored on the heap.
 pub type Array<T> = Box<[T]>;
 /// Owned array of bytes stored on the heap.

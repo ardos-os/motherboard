@@ -43,6 +43,8 @@ pub struct AuthInfo {
 pub mod message_inbox;
 pub mod reply_tokens;
 
+const DEBUG_DISABLE_BIND_SERVICE_UID_CHECK: bool = true;
+
 pub struct State {
     services: HashMap<SharedStr, Service>,
     inboxes: Inboxes,
@@ -73,7 +75,8 @@ impl State {
         match command {
             Command::BindService { name } => {
                 // I think 1000 UIDs reserved for Ardos OS services is enough
-                let is_system_daemon = auth_info.is_trusted && auth_info.uid < 1000;
+                let is_system_daemon = auth_info.is_trusted
+                    && (DEBUG_DISABLE_BIND_SERVICE_UID_CHECK || auth_info.uid < 1000);
                 if !is_system_daemon {
                     return CommandResult(Err(TransportError::Unauthorized));
                 }
@@ -120,7 +123,7 @@ impl State {
                 payload,
                 fds,
             } => {
-                let Some(service) = self.services.get_mut(service.as_ref()) else {
+                let Some(service) = self.services.get_mut(service.as_str()) else {
                     return CommandResult(Err(TransportError::NoSuchService));
                 };
                 let payload: SharedData = payload.into();
@@ -215,14 +218,14 @@ impl State {
                 subscription_id,
                 payload,
             } => {
-                let Some(service_ref) = self.services.get(service.as_ref()) else {
+                let Some(service_ref) = self.services.get(service.as_str()) else {
                     return CommandResult(Err(TransportError::NoSuchService));
                 };
                 let store_name = match StoreName::check(store) {
                     Ok(store_name) => store_name,
                     Err(error) => {
                         return CommandResult(Err(TransportError::InvalidStoreName {
-                            message: error.message.as_ref().into(),
+                            message: error.message.as_str().into(),
                         }));
                     }
                 };
@@ -246,8 +249,8 @@ impl State {
                             file,
                             QueuedInboxMessage::without_fds(
                                 InboxMessage::StoreSubscriptionAccepted {
-                                    service: snapshot.path.service.as_ref().into(),
-                                    store: snapshot.path.store.as_shared().as_ref().into(),
+                                    service: snapshot.path.service.as_str().into(),
+                                    store: snapshot.path.store.as_str().into(),
                                     subscription_id,
                                     current_value: snapshot.current_value.as_ref().into(),
                                     last_updated_timestamp: snapshot.last_updated_timestamp,
@@ -270,8 +273,8 @@ impl State {
                         .queue(
                             service_ref.file_id,
                             QueuedInboxMessage::without_fds(InboxMessage::SubscribeRequest {
-                                service: path.service.as_ref().into(),
-                                store: path.store.as_shared().as_ref().into(),
+                                service: path.service.as_str().into(),
+                                store: path.store.as_str().into(),
                                 subscription_id,
                                 reply_token,
                                 origin: auth_info.into(),
@@ -320,8 +323,8 @@ impl State {
                                 pending.client_file_id,
                                 QueuedInboxMessage::without_fds(
                                     InboxMessage::StoreSubscriptionAccepted {
-                                        service: snapshot.path.service.as_ref().into(),
-                                        store: snapshot.path.store.as_shared().as_ref().into(),
+                                        service: snapshot.path.service.as_str().into(),
+                                        store: snapshot.path.store.as_str().into(),
                                         subscription_id: pending.subscription_id,
                                         current_value: snapshot.current_value.as_ref().into(),
                                         last_updated_timestamp: snapshot.last_updated_timestamp,
@@ -340,8 +343,8 @@ impl State {
                                 pending.client_file_id,
                                 QueuedInboxMessage::without_fds(
                                     InboxMessage::StoreSubscriptionRejected {
-                                        service: pending.store.service.as_ref().into(),
-                                        store: pending.store.store.as_shared().as_ref().into(),
+                                        service: pending.store.service.as_str().into(),
+                                        store: pending.store.store.as_str().into(),
                                         subscription_id: pending.subscription_id,
                                         message,
                                     },
@@ -362,7 +365,7 @@ impl State {
                 initial_value,
                 public,
             } => {
-                let Some(service_ref) = self.services.get(service.as_ref()) else {
+                let Some(service_ref) = self.services.get(service.as_str()) else {
                     return CommandResult(Err(TransportError::NoSuchService));
                 };
                 if service_ref.file_id != file {
@@ -373,7 +376,7 @@ impl State {
                     Ok(store_name) => store_name,
                     Err(error) => {
                         return CommandResult(Err(TransportError::InvalidStoreName {
-                            message: error.message.as_ref().into(),
+                            message: error.message.as_str().into(),
                         }));
                     }
                 };
@@ -393,7 +396,7 @@ impl State {
                 store,
                 value,
             } => {
-                let Some(service_ref) = self.services.get(service.as_ref()) else {
+                let Some(service_ref) = self.services.get(service.as_str()) else {
                     return CommandResult(Err(TransportError::NoSuchService));
                 };
                 if service_ref.file_id != file {
@@ -404,7 +407,7 @@ impl State {
                     Ok(store_name) => store_name,
                     Err(error) => {
                         return CommandResult(Err(TransportError::InvalidStoreName {
-                            message: error.message.as_ref().into(),
+                            message: error.message.as_str().into(),
                         }));
                     }
                 };
@@ -422,8 +425,8 @@ impl State {
                             subscriber_file,
                             QueuedInboxMessage::without_fds(
                                 InboxMessage::StoreSubscriptionUpdated {
-                                    service: snapshot.path.service.as_ref().into(),
-                                    store: snapshot.path.store.as_shared().as_ref().into(),
+                                    service: snapshot.path.service.as_str().into(),
+                                    store: snapshot.path.store.as_str().into(),
                                     subscription_id,
                                     payload: snapshot.current_value.as_ref().into(),
                                 },
@@ -473,7 +476,7 @@ impl State {
                 closed_services
             );
             for service in closed_services {
-                let service: &str = service.as_ref();
+                let service: &str = service.as_str();
                 self.stores.remove_service(service);
                 for (subscriber_file, subscription_id, path) in
                     self.subscriptions.cleanup_service(service)
@@ -481,8 +484,8 @@ impl State {
                     let _ = self.inboxes.queue(
                         subscriber_file,
                         QueuedInboxMessage::without_fds(InboxMessage::StoreSubscriptionClosed {
-                            service: path.service.as_ref().into(),
-                            store: path.store.as_shared().as_ref().into(),
+                            service: path.service.as_str().into(),
+                            store: path.store.as_str().into(),
                             subscription_id,
                             reason: CloseReason::ServiceExited,
                         }),

@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 payload,
                 origin,
                 ..
-            }) if method.as_ref() == "setTheme" => {
+            }) if method.as_str() == "setTheme" => {
                 let result = set_theme(&motherboard, &payload);
                 match result {
                     Ok(theme) => {
@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             reply_token,
                             ReplyStatus::Error {
                                 code: "InvalidTheme".into(),
-                                message: message.clone().into_boxed_str(),
+                                message: message.clone().into(),
                             },
                             message.into_bytes(),
                             Box::<[u32]>::default(),
@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     reply_token,
                     ReplyStatus::Error {
                         code: "UnknownMethod".into(),
-                        message: message.clone().into_boxed_str(),
+                        message: message.clone().into(),
                     },
                     message.into_bytes(),
                     Box::<[u32]>::default(),
