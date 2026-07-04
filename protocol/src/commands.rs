@@ -22,6 +22,10 @@ pub struct RequestId(pub u64);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct SubscriptionId(pub u64);
 
+/// Kernel-selected anonymous store identifier.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub struct AnonymousStoreId(pub u64);
+
 /// Kernel-issued token that lets a service reply to exactly one pending request.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct ReplyToken(pub u64);
@@ -73,6 +77,13 @@ pub enum Command {
         payload: Data,
     },
 
+    /// Requests a subscription to an anonymous store by kernel-issued id. (Client Side)
+    AnonymousStoreSubscribe {
+        id: AnonymousStoreId,
+        subscription_id: SubscriptionId,
+        payload: Data,
+    },
+
     /// Accepts or rejects a pending subscription request. (Server Side)
     StoreSubscriptionReply {
         reply_token: ReplyToken,
@@ -94,6 +105,12 @@ pub enum Command {
         store: Str,
         value: Data,
     },
+
+    /// Creates a service-owned anonymous store. (Server Side)
+    AnonymousStoreCreate { service: Str, initial_value: Data },
+
+    /// Updates a service-owned anonymous store, notifying all listeners. (Server Side)
+    AnonymousStoreUpdate { id: AnonymousStoreId, value: Data },
 
     /// Cancels a previously requested or accepted subscription. (Client Side)
     StoreUnsubscribe { subscription_id: SubscriptionId },
@@ -141,6 +158,10 @@ pub enum CommandReply {
     StoreSubscriptionReplyAccepted,
     /// Confirmation to [`Command::StoreCreate`]
     StoreCreateAccepted,
+    /// Response to [`Command::AnonymousStoreCreate`]
+    AnonymousStoreCreated {
+        id: AnonymousStoreId,
+    },
     /// Confirmation to [`Command::StoreUpdate`]
     StoreUpdateAccepted,
     /// Confirmation to [`Command::StoreUnsubscribe`]
@@ -184,6 +205,15 @@ pub enum InboxMessage {
         payload: Data,
     },
 
+    /// A client is trying to subscribe to an anonymous store owned by this service.
+    AnonymousStoreSubscribeRequest {
+        id: AnonymousStoreId,
+        subscription_id: SubscriptionId,
+        reply_token: ReplyToken,
+        origin: Origin,
+        payload: Data,
+    },
+
     /// The server accepted the subscription to a store
     StoreSubscriptionAccepted {
         service: Str,
@@ -214,6 +244,35 @@ pub enum InboxMessage {
     StoreSubscriptionClosed {
         service: Str,
         store: Str,
+        subscription_id: SubscriptionId,
+        reason: CloseReason,
+    },
+
+    /// The server accepted the subscription to an anonymous store.
+    AnonymousStoreSubscriptionAccepted {
+        id: AnonymousStoreId,
+        subscription_id: SubscriptionId,
+        current_value: Data,
+        last_updated_timestamp: isize,
+    },
+
+    /// The server rejected the anonymous store subscription.
+    AnonymousStoreSubscriptionRejected {
+        id: AnonymousStoreId,
+        subscription_id: SubscriptionId,
+        message: Str,
+    },
+
+    /// An anonymous store you were subscribed to just updated.
+    AnonymousStoreSubscriptionUpdated {
+        id: AnonymousStoreId,
+        subscription_id: SubscriptionId,
+        payload: Data,
+    },
+
+    /// Anonymous store subscription was terminated by the client or the server.
+    AnonymousStoreSubscriptionClosed {
+        id: AnonymousStoreId,
         subscription_id: SubscriptionId,
         reason: CloseReason,
     },

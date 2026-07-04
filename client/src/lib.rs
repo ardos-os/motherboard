@@ -9,8 +9,9 @@ use std::{
 };
 
 pub use motherboardm_protocol::{
-    CloseReason, Command, CommandReply, CommandResult, InboxMessage, Origin, RawFd, ReplyStatus,
-    ReplyToken, RequestId, StoreSubscriptionServerVerdict, Str, SubscriptionId, TransportError,
+    AnonymousStoreId, CloseReason, Command, CommandReply, CommandResult, InboxMessage, Origin,
+    RawFd, ReplyStatus, ReplyToken, RequestId, StoreSubscriptionServerVerdict, Str, SubscriptionId,
+    TransportError,
 };
 use motherboardm_protocol::{CommandEnvelope, MOTHERBOARD_IOCTL_EXECUTE};
 
@@ -235,6 +236,19 @@ pub trait ClientStoresApi {
         payload: impl Into<Box<[u8]>>,
     ) -> Result<SubscriptionId, ClientError>;
 
+    fn subscribe_anonymous(
+        &self,
+        id: AnonymousStoreId,
+        payload: impl Into<Box<[u8]>>,
+    ) -> Result<SubscriptionId, ClientError>;
+
+    fn subscribe_anonymous_with_id(
+        &self,
+        id: AnonymousStoreId,
+        subscription_id: SubscriptionId,
+        payload: impl Into<Box<[u8]>>,
+    ) -> Result<SubscriptionId, ClientError>;
+
     fn unsubscribe(&self, subscription_id: SubscriptionId) -> Result<(), ClientError>;
 }
 
@@ -251,6 +265,18 @@ pub trait ServerStoresApi {
         &self,
         service: &str,
         store: &str,
+        value: impl Into<Box<[u8]>>,
+    ) -> Result<(), ClientError>;
+
+    fn create_anonymous(
+        &self,
+        service: &str,
+        initial_value: impl Into<Box<[u8]>>,
+    ) -> Result<AnonymousStoreId, ClientError>;
+
+    fn update_anonymous(
+        &self,
+        id: AnonymousStoreId,
         value: impl Into<Box<[u8]>>,
     ) -> Result<(), ClientError>;
 
@@ -440,6 +466,33 @@ impl ClientStoresApi for ClientStoresNamespace<'_> {
         }
     }
 
+    fn subscribe_anonymous(
+        &self,
+        id: AnonymousStoreId,
+        payload: impl Into<Box<[u8]>>,
+    ) -> Result<SubscriptionId, ClientError> {
+        let subscription_id = self.motherboard.next_subscription_id();
+        self.subscribe_anonymous_with_id(id, subscription_id, payload)
+    }
+
+    fn subscribe_anonymous_with_id(
+        &self,
+        id: AnonymousStoreId,
+        subscription_id: SubscriptionId,
+        payload: impl Into<Box<[u8]>>,
+    ) -> Result<SubscriptionId, ClientError> {
+        match self.motherboard.execute(Command::AnonymousStoreSubscribe {
+            id,
+            subscription_id,
+            payload: payload.into(),
+        })? {
+            CommandReply::StoreSubscriptionAccepted {
+                subscription_id: submitted,
+            } if submitted == subscription_id => Ok(submitted),
+            reply => Err(ClientError::UnexpectedReply(reply)),
+        }
+    }
+
     fn unsubscribe(&self, subscription_id: SubscriptionId) -> Result<(), ClientError> {
         match self
             .motherboard
@@ -479,6 +532,34 @@ impl ServerStoresApi for ServerStoresNamespace<'_> {
         match self.motherboard.execute(Command::StoreUpdate {
             service: service.into(),
             store: store.into(),
+            value: value.into(),
+        })? {
+            CommandReply::StoreUpdateAccepted => Ok(()),
+            reply => Err(ClientError::UnexpectedReply(reply)),
+        }
+    }
+
+    fn create_anonymous(
+        &self,
+        service: &str,
+        initial_value: impl Into<Box<[u8]>>,
+    ) -> Result<AnonymousStoreId, ClientError> {
+        match self.motherboard.execute(Command::AnonymousStoreCreate {
+            service: service.into(),
+            initial_value: initial_value.into(),
+        })? {
+            CommandReply::AnonymousStoreCreated { id } => Ok(id),
+            reply => Err(ClientError::UnexpectedReply(reply)),
+        }
+    }
+
+    fn update_anonymous(
+        &self,
+        id: AnonymousStoreId,
+        value: impl Into<Box<[u8]>>,
+    ) -> Result<(), ClientError> {
+        match self.motherboard.execute(Command::AnonymousStoreUpdate {
+            id,
             value: value.into(),
         })? {
             CommandReply::StoreUpdateAccepted => Ok(()),

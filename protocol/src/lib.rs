@@ -5,10 +5,10 @@ pub use postcard;
 use serde::{Deserialize, Serialize};
 
 pub use crate::commands::{
-    CloseReason, Command, CommandReply, InboxMessage, Origin, RawFd, ReplyStatus, ReplyToken,
-    RequestId, StoreSubscriptionServerVerdict, Str, SubscriptionId, TransportError,
+    AnonymousStoreId, CloseReason, Command, CommandReply, InboxMessage, Origin, RawFd, ReplyStatus,
+    ReplyToken, RequestId, StoreSubscriptionServerVerdict, Str, SubscriptionId, TransportError,
 };
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 
 const IOC_NRBITS: u32 = 8;
 const IOC_TYPEBITS: u32 = 8;
