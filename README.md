@@ -16,7 +16,8 @@ privileged or semi-privileged system services through one shared transport.
 - **OS-level dependency injection**
     - Apps do not know what process is implementing what service, allowing the implementation (server) to be swapped out entirely without breaking anything
 - **Reactive state and state management**
-    - Services can contain stores which are variables which contain reactive data and can be watched and read by clients. Whenever the server updates the store's value, everyone is notified automatically.
+    - **Stores**: Services can contain stores which are variables which contain reactive data and can be watched and read by clients. Whenever the server updates the store's value, everyone is notified automatically.
+    - **Anonymous stores**: Can be read and watched just like normal stores, but don't have a name and can be created, returned and destroyed on-the-fly by server functions.
 - **Signals** allow clients to receive events from services like for example when the user clicks on a button on a notification the app sent earlier. (not implemented yet)
 
 
