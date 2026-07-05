@@ -88,15 +88,6 @@ impl MotherboardUi {
         service: impl Into<String>,
         store: impl Into<String>,
     ) -> Result<ExternalStoreSubscription<SharedData>, MotherboardUiError> {
-        self.subscribe_store_with_payload(service, store, Box::<[u8]>::default())
-    }
-
-    pub fn subscribe_store_with_payload(
-        &self,
-        service: impl Into<String>,
-        store: impl Into<String>,
-        payload: impl Into<Box<[u8]>>,
-    ) -> Result<ExternalStoreSubscription<SharedData>, MotherboardUiError> {
         let service = service.into();
         let store = store.into();
         let subscription_id = self.inner.motherboard.next_subscription_id();
@@ -122,7 +113,6 @@ impl MotherboardUi {
             &service,
             &store,
             subscription_id,
-            payload,
         ) {
             self.remove_subscription(subscription_id);
             return Err(error.into());
@@ -159,23 +149,12 @@ pub fn use_motherboard_store(
     service: impl Into<String>,
     store: impl Into<String>,
 ) -> Option<SharedData> {
-    use_motherboard_store_with_payload(motherboard, service, store, Box::<[u8]>::default())
-}
-
-pub fn use_motherboard_store_with_payload(
-    motherboard: MotherboardUi,
-    service: impl Into<String>,
-    store: impl Into<String>,
-    payload: impl Into<Box<[u8]>>,
-) -> Option<SharedData> {
     let service = service.into();
     let store = store.into();
-    let payload = Arc::<[u8]>::from(payload.into());
     let subscription_key = (
         Arc::as_ptr(&motherboard.inner) as usize,
         service.clone(),
         store.clone(),
-        hash_bytes(&payload),
     );
 
     let subscribe = use_callback(
@@ -183,15 +162,10 @@ pub fn use_motherboard_store_with_payload(
             let motherboard = motherboard.clone();
             let service = service.clone();
             let store = store.clone();
-            let payload = Arc::clone(&payload);
 
             move || {
                 motherboard
-                    .subscribe_store_with_payload(
-                        service.clone(),
-                        store.clone(),
-                        Box::<[u8]>::from(payload.as_ref()),
-                    )
+                    .subscribe_store(service.clone(), store.clone())
                     .unwrap_or_else(|_| {
                         let (_tx, rx) = mpsc::channel();
                         ExternalStoreSubscription::new(rx, || {})
@@ -314,12 +288,4 @@ fn wait_for_latch(latch_fd: &impl AsRawFd) -> std::io::Result<()> {
             return Err(error);
         }
     }
-}
-
-fn hash_bytes(bytes: &[u8]) -> u64 {
-    use std::hash::{DefaultHasher, Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
 }

@@ -88,22 +88,6 @@ and joined back into one without breaking the interface.
 
 This is highly inspired by android where a lot of android java APIs actually map to calling remote functions from privileged system components and daemons such as when you ask for permissions, use startActivity to switch screens, send notifications or register services. motherboardm aims to help implement this pattern.
 
-## Repository Layout
-
-```text
-.
-├── Cargo.toml                         # userspace workspace
-├── client/                            # Userspace Rust client library and examples
-├── docs/                              # Design notes
-├── motherboard-ardos-ui-integration/  # Ardos UI integration helpers
-├── motherboardm/                      # Rust Linux kernel module
-├── proof-of-concept/                  # End-to-end demos
-└── protocol/                          # Shared command, reply, and message types
-```
-
-The parent Cargo workspace contains the userspace crates. `motherboardm` is
-excluded from that workspace because kernel modules are built with `cargo-nok`,
-but it still imports the shared `protocol` crate.
 
 ## Protocol Model
 
@@ -198,15 +182,18 @@ When an inbox is empty, `InboxNextMessage` returns:
 TransportError::WouldBlock { latch_fd }
 ```
 
-That `latch_fd` is a temporary, one-way readiness object:
+That `latch_fd` is a file descriptor that:
 
 - userspace polls it for readability;
 - the kernel trips it when new inbox work arrives;
 - once tripped, it stays readable forever;
 - userspace should close it and call `InboxNextMessage` again.
 
-This makes the transport friendly to `poll`, `epoll`, and async runtimes without
+This makes `motherboard` friendly to `poll`, `epoll`, and async runtimes without
 requiring every process to spin in a busy loop.
+
+
+
 
 ## File Descriptor Passing
 
@@ -314,7 +301,7 @@ cargo nok unload
 
 ## Userspace API
 
-The `motherboard-client` crate provides a small synchronous wrapper around the
+The `motherboard-client` crate provides a low level wrapper around the
 ioctl protocol.
 
 Here's an example of a simple RPC call to an `EchoService`
@@ -347,6 +334,12 @@ loop {
 
 With the optional `tokio` feature, the client crate also exposes
 `fetch_async()` which uses tokio's reactor to await the latch file descriptor automatically.
+
+## Motherboard IDL
+
+midl (Motherboard Interface Definition Language) is a language for defining service interfaces and generating clients and server runtime boilerplate.
+
+Read more about `midl` at [midl/README.md](./midl/README.md)
 
 ## Ardos UI Integration
 

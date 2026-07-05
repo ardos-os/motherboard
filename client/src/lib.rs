@@ -221,32 +221,21 @@ pub trait ServerCallsApi {
 }
 
 pub trait ClientStoresApi {
-    fn subscribe(
-        &self,
-        service: &str,
-        store: &str,
-        payload: impl Into<Box<[u8]>>,
-    ) -> Result<SubscriptionId, ClientError>;
+    fn subscribe(&self, service: &str, store: &str) -> Result<SubscriptionId, ClientError>;
 
     fn subscribe_with_id(
         &self,
         service: &str,
         store: &str,
         subscription_id: SubscriptionId,
-        payload: impl Into<Box<[u8]>>,
     ) -> Result<SubscriptionId, ClientError>;
 
-    fn subscribe_anonymous(
-        &self,
-        id: AnonymousStoreId,
-        payload: impl Into<Box<[u8]>>,
-    ) -> Result<SubscriptionId, ClientError>;
+    fn subscribe_anonymous(&self, id: AnonymousStoreId) -> Result<SubscriptionId, ClientError>;
 
     fn subscribe_anonymous_with_id(
         &self,
         id: AnonymousStoreId,
         subscription_id: SubscriptionId,
-        payload: impl Into<Box<[u8]>>,
     ) -> Result<SubscriptionId, ClientError>;
 
     fn unsubscribe(&self, subscription_id: SubscriptionId) -> Result<(), ClientError>;
@@ -436,14 +425,9 @@ impl ServerCallsApi for ServerCallsNamespace<'_> {
 }
 
 impl ClientStoresApi for ClientStoresNamespace<'_> {
-    fn subscribe(
-        &self,
-        service: &str,
-        store: &str,
-        payload: impl Into<Box<[u8]>>,
-    ) -> Result<SubscriptionId, ClientError> {
+    fn subscribe(&self, service: &str, store: &str) -> Result<SubscriptionId, ClientError> {
         let subscription_id = self.motherboard.next_subscription_id();
-        self.subscribe_with_id(service, store, subscription_id, payload)
+        self.subscribe_with_id(service, store, subscription_id)
     }
 
     fn subscribe_with_id(
@@ -451,13 +435,11 @@ impl ClientStoresApi for ClientStoresNamespace<'_> {
         service: &str,
         store: &str,
         subscription_id: SubscriptionId,
-        payload: impl Into<Box<[u8]>>,
     ) -> Result<SubscriptionId, ClientError> {
         match self.motherboard.execute(Command::StoreSubscribe {
             service: service.into(),
             store: store.into(),
             subscription_id,
-            payload: payload.into(),
         })? {
             CommandReply::StoreSubscriptionAccepted {
                 subscription_id: submitted,
@@ -466,25 +448,19 @@ impl ClientStoresApi for ClientStoresNamespace<'_> {
         }
     }
 
-    fn subscribe_anonymous(
-        &self,
-        id: AnonymousStoreId,
-        payload: impl Into<Box<[u8]>>,
-    ) -> Result<SubscriptionId, ClientError> {
+    fn subscribe_anonymous(&self, id: AnonymousStoreId) -> Result<SubscriptionId, ClientError> {
         let subscription_id = self.motherboard.next_subscription_id();
-        self.subscribe_anonymous_with_id(id, subscription_id, payload)
+        self.subscribe_anonymous_with_id(id, subscription_id)
     }
 
     fn subscribe_anonymous_with_id(
         &self,
         id: AnonymousStoreId,
         subscription_id: SubscriptionId,
-        payload: impl Into<Box<[u8]>>,
     ) -> Result<SubscriptionId, ClientError> {
         match self.motherboard.execute(Command::AnonymousStoreSubscribe {
             id,
             subscription_id,
-            payload: payload.into(),
         })? {
             CommandReply::StoreSubscriptionAccepted {
                 subscription_id: submitted,

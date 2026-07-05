@@ -74,14 +74,12 @@ pub enum Command {
         service: Str,
         store: Str,
         subscription_id: SubscriptionId,
-        payload: Data,
     },
 
     /// Requests a subscription to an anonymous store by kernel-issued id. (Client Side)
     AnonymousStoreSubscribe {
         id: AnonymousStoreId,
         subscription_id: SubscriptionId,
-        payload: Data,
     },
 
     /// Accepts or rejects a pending subscription request. (Server Side)
@@ -202,7 +200,6 @@ pub enum InboxMessage {
         subscription_id: SubscriptionId,
         reply_token: ReplyToken,
         origin: Origin,
-        payload: Data,
     },
 
     /// A client is trying to subscribe to an anonymous store owned by this service.
@@ -211,7 +208,6 @@ pub enum InboxMessage {
         subscription_id: SubscriptionId,
         reply_token: ReplyToken,
         origin: Origin,
-        payload: Data,
     },
 
     /// The server accepted the subscription to a store

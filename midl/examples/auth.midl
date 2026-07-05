@@ -1,0 +1,43 @@
+// Minimal copy of the Init and Auth interfaces used to exercise the prototype.
+
+service Init {
+    store totalComponents: string[];
+    store startingComponents: string[];
+    store startedComponents: string[];
+    store logs: string[];
+}
+
+service Auth {
+    type AuthSessionToken = string;
+    type PID = u64;
+
+    enum AuthSessionStatus {
+        Pending,
+        LoggedIn,
+        Canceled
+    }
+
+    enum FarProcessState {
+        Running,
+        ExittedNormally,
+        Crashed { logs: string }
+    }
+
+    /// This starts a new login session and should be called as soon as the login screen shows the login prompt.
+    fn start_user_auth(user: string) -> AuthSessionToken?(error { UserNotFound, Conflict });
+
+    /// Resolves a login session with a password.
+    fn login_with_password(sessionId: AuthSessionToken, password: string) -> bool?(error { InvalidSessionId });
+
+    /// Runs a command as a previously authorized user.
+    fn run_command_as(sessionId: AuthSessionToken) -> PID?(error { InvalidSessionId, CommandSpawnFailed });
+
+    /// Closes the login session, not resulting in a successful login.
+    fn cancel_login(sessionId: AuthSessionToken) -> void?(error { NotFound });
+
+    /// Returns an anonymous store with the current auth session state.
+    fn auth_session_status(sessionId: AuthSessionToken) -> AnonymousStore<AuthSessionStatus>?(error { InvalidSessionId, PermissionDenied });
+
+    /// Watches the status of a far process.
+    fn watch_far_process(sessionId: AuthSessionToken, pid: PID) -> AnonymousStore<FarProcessState>?(error { InvalidSessionId, PermissionDenied, PidNotFound });
+}

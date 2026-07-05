@@ -46,7 +46,7 @@ pub struct AuthInfo {
 pub mod message_inbox;
 pub mod reply_tokens;
 
-const DEBUG_DISABLE_BIND_SERVICE_UID_CHECK: bool = false;
+const DEBUG_DISABLE_BIND_SERVICE_UID_CHECK: bool = true;
 
 pub struct State {
     services: HashMap<SharedStr, Service>,
@@ -305,7 +305,6 @@ impl State {
             service,
             store,
             subscription_id,
-            payload,
         } = command
         else {
             return CommandResult(Err(TransportError::ResourceExhausted));
@@ -370,7 +369,6 @@ impl State {
                         subscription_id,
                         reply_token,
                         origin: auth_info.into(),
-                        payload,
                     }),
                 )
                 .is_err()
@@ -394,7 +392,6 @@ impl State {
         let Command::AnonymousStoreSubscribe {
             id,
             subscription_id,
-            payload,
         } = command
         else {
             return CommandResult(Err(TransportError::ResourceExhausted));
@@ -424,7 +421,6 @@ impl State {
                     subscription_id,
                     reply_token,
                     origin: auth_info.into(),
-                    payload,
                 }),
             )
             .is_err()
