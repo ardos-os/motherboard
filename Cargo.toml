@@ -5,7 +5,6 @@ members = [
     "motherboard-ardos-ui-integration",
     "proof-of-concept/ping-client",
     "proof-of-concept/ping-service",
-    "proof-of-concept/midl-e2e",
     "proof-of-concept/settings-app",
     "proof-of-concept/settings-service",
     "protocol",
