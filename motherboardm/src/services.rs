@@ -1,7 +1,7 @@
 use alloc::{collections::vec_deque::VecDeque, vec::Vec};
 use kernel::{
     fs::{File, LocalFile, file::BadFdError},
-    types::ARef,
+    sync::aref::ARef,
 };
 use motherboardm_protocol::{InboxMessage, Origin, RawFd, RequestId, commands::Array};
 

@@ -7,7 +7,7 @@ use kernel::{
     fs::{File, file::FileDescriptorReservation},
     prelude::*,
     sync::poll::PollCondVar,
-    types::ARef,
+    sync::aref::ARef,
 };
 use motherboardm_protocol::{InboxMessage, RawFd, commands::Array};
 
